@@ -1,0 +1,35 @@
+# Build output
+/build/
+/out/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.obj
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+
+# Asset tooling
+node_modules/
+__pycache__/
+*.pyc
+
+# IDE / editor
+/.vs/
+/.idea/
+/.vscode/
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key

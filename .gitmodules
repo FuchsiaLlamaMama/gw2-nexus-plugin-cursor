@@ -1,0 +1,9 @@
+[submodule "sdk"]
+	path = sdk
+	url = https://github.com/RaidcoreGG/Nexus-API
+[submodule "vendor/imgui"]
+	path = vendor/imgui
+	url = https://github.com/RaidcoreGG/imgui
+[submodule "shared"]
+	path = shared
+	url = https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-shared
