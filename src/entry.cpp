@@ -1693,9 +1693,11 @@ extern "C" __declspec(dllexport) AddonDefinition_t* GetAddonDef()
     g_AddonDef.Load        = AddonLoad;
     g_AddonDef.Unload      = AddonUnload;
     g_AddonDef.Flags       = AF_None;
-    // No Nexus auto-update provider configured.
-    g_AddonDef.Provider    = UP_None;
-    g_AddonDef.UpdateLink  = nullptr;
+    // Nexus auto-update from GitHub releases: Nexus picks the release whose tag
+    // (vMAJOR.MINOR.PATCH) is highest and downloads its first .dll asset, so the
+    // tag must match Version above.
+    g_AddonDef.Provider    = UP_GitHub;
+    g_AddonDef.UpdateLink  = "https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor";
     return &g_AddonDef;
 }
 

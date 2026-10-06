@@ -28,11 +28,12 @@ combat), never game memory.
 You need Guild Wars 2 (64-bit) with [Nexus](https://raidcore.gg/gw2/nexus)
 installed.
 
-1. Open the latest green run of the **build** workflow under this repository's
-   **Actions** tab.
-2. Download the `cursor-dll` artifact and unzip it.
-3. Put `cursor.dll` in your Guild Wars 2 `addons/` folder.
-4. Start the game and load **Cursor Finder** from Nexus's addon list.
+1. Download `cursor.dll` from the latest
+   [release](https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor/releases/latest).
+2. Put `cursor.dll` in your Guild Wars 2 `addons/` folder.
+3. Start the game and load **Cursor Finder** from Nexus's addon list.
+
+Nexus keeps it up to date automatically from this repository's releases.
 
 Developed and tested in-game under CrossOver on macOS (Apple Silicon). Built as
 a standard x64 Windows DLL.
