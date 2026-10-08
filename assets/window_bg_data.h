@@ -1,5 +1,5 @@
 // window_bg_data.h — window-square-bg.png as a C byte array.
-// Generated from cursor/assets/textures/window-square-bg.png. Loaded via
+// Generated from assets/textures/window-square-bg.png. Loaded via
 // Textures_GetOrCreateFromMemory, same as
 // the preset layers (no RCDATA/FindResource).
 #pragma once

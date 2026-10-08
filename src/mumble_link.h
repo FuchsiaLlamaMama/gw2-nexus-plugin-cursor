@@ -9,13 +9,13 @@
 // combat bit). The layout is **runtime-unverified until read in-game** (confirm
 // combat is UiState bit 6 / 0x40).
 //
-// Windows/MSVC-only glue; NOT part of cursor-core (the pure combat/visibility
-// logic lives in cursor/core/visibility.h and is unit-tested off-game).
+// Windows/MSVC-only glue; NOT part of cursor-finder-core (the pure combat/visibility
+// logic lives in core/visibility.h and is unit-tested off-game).
 #pragma once
 
 #include <cstdint>
 
-namespace cursor {
+namespace cursor_finder {
 
 // The GW2-specific block that lives in the first bytes of LinkedMem::Context.
 // #pragma pack(1) to match the game's tightly-packed shared-memory layout.
@@ -65,4 +65,4 @@ struct MumbleLink {
 };
 #pragma pack(pop)
 
-} // namespace cursor
+} // namespace cursor_finder

@@ -1,4 +1,4 @@
-// cursor-core — "clip cursor while dragging" state machine.
+// cursor-finder-core — "clip cursor while dragging" state machine.
 //
 // Pins the OS pointer in place for the duration of a mouse-button hold and
 // releases it the instant the button comes up. The DLL applies the decision with
@@ -29,10 +29,10 @@
 //     no state, so turning it off can never leave the pointer pinned.
 #pragma once
 
-namespace cursor {
+namespace cursor_finder {
 
 // A screen-space point in pixels. Plain floats — deliberately not ImVec2, to keep
-// ImGui out of cursor-core (the DLL converts at the draw site).
+// ImGui out of cursor-finder-core (the DLL converts at the draw site).
 struct Vec2 {
     float x = 0.0f;
     float y = 0.0f;
@@ -69,4 +69,4 @@ private:
     Vec2 frozen_pos_{};      // where the pointer was pinned when the freeze engaged
 };
 
-} // namespace cursor
+} // namespace cursor_finder

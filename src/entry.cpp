@@ -1,12 +1,12 @@
 // Cursor Finder — a Nexus addon for Guild Wars 2.
 //
-// The Nexus/ImGui glue around cursor-core: a QuickAccess toolbar button + a
+// The Nexus/ImGui glue around cursor-finder-core: a QuickAccess toolbar button + a
 // keybind (unbound by default) that toggle a findability marker centered on the mouse
 // pointer, plus a settings panel with a live preview and the full APPEARANCE
 // block — preset picker, colour, size, opacity, outline (toggle + colour), fill
 // (toggle + opacity + colour), and reset-to-defaults. State persists to
 // versioned JSON in the addon directory (write-through — durability does not
-// depend on Unload; see cursor/core/cursor_store.h).
+// depend on Unload; see core/cursor_finder_store.h).
 //
 // Presets are drawn from layered white/alpha mask textures: a
 // tintable outline layer + a tintable colour layer, embedded as C byte arrays
@@ -17,7 +17,7 @@
 // procedural ring so the marker never blanks.
 //
 // This file is Windows/MSVC-only (Nexus.h + ImGui + Windows.h). The testable
-// logic (settings, migration, geometry) lives in cursor-core, which builds and
+// logic (settings, migration, geometry) lives in cursor-finder-core, which builds and
 // is unit-tested on macOS/clang. NOT built on macOS (needs the sdk/ +
 // vendor/imgui submodules); compiled by CI on Windows/MSVC.
 
@@ -32,7 +32,7 @@
 #include "imgui.h"
 #include "Nexus.h"
 
-#include "core/cursor_store.h"
+#include "core/cursor_finder_store.h"
 #include "core/marker.h"
 #include "core/clip_freeze.h"
 #include "core/visibility.h"
@@ -43,7 +43,7 @@
 #include "../assets/pointer_data.h"
 #include "../assets/icon_textures_data.h"  // embedded QuickAccess icon PNG bytes
 
-// Native-look theme. The cursor DLL links shared-core, whose include
+// Native-look theme. The cursor-finder DLL links shared-core, whose include
 // root is shared/, so these resolve directly. Applied stack-scoped around our
 // window only (see AddonRender) — never mutating the global ImGui style.
 #include "theme/theme.h"
@@ -52,8 +52,8 @@
 namespace {
 
 // Identifiers Nexus keys registrations by; must be stable across load/unload.
-constexpr const char* kKeybindId     = "KB_CURSOR_TOGGLE";
-constexpr const char* kQuickAccessId = "QA_CURSOR";
+constexpr const char* kKeybindId     = "KB_CURSOR_FINDER_TOGGLE";
+constexpr const char* kQuickAccessId = "QA_CURSOR_FINDER";
 constexpr const char* kWindowName    = "Cursor Finder";
 // Registered UNBOUND. "(null)" is Nexus's sentinel for "no default combo": the
 // keybind identifier still exists (so the quick-access toolbar icon, which
@@ -74,12 +74,12 @@ constexpr const char* kDefaultBind   = "(null)";
 // Registered from the render loop, not AddonLoad: the
 // textures resolve only after the render device is up, and QuickAccess_Add binds
 // the icon at call time.
-constexpr const char* kIconId      = "ICON_CURSOR";
-constexpr const char* kIconHoverId = "ICON_CURSOR_HOVER";
+constexpr const char* kIconId      = "ICON_CURSOR_FINDER";
+constexpr const char* kIconHoverId = "ICON_CURSOR_FINDER_HOVER";
 
 AddonDefinition_t g_AddonDef{};
 AddonAPI_t*        g_API    = nullptr;
-cursor::CursorStore* g_Store = nullptr;
+cursor_finder::CursorStore* g_Store = nullptr;
 bool               g_PanelOpen = false;
 
 // No bundled panel font: Nexus's Fonts_AddFromResource/RCDATA loader
@@ -95,12 +95,12 @@ bool               g_QuickAccessAdded = false;
 
 // Clip-cursor-after-drag state. Persists across frames; a pass-through
 // when the toggle is off. Only the render thread touches the state machine.
-cursor::ClipFreeze g_Clip;
+cursor_finder::ClipFreeze g_Clip;
 
-// Pointer-motion tracker for the out-of-combat "While moving" visibility mode.
-// Persists across frames (last position + last-move timestamp); only the render
-// thread touches it. The linger logic is pure cursor-core (visibility.h).
-cursor::PointerMotion g_PointerMotion;
+// Character-motion linger for the out-of-combat "While moving" visibility mode.
+// Persists across frames (last-move timestamp); only the render thread touches
+// it. The linger logic is pure cursor-finder-core (visibility.h).
+cursor_finder::MotionLinger g_MotionLinger;
 
 // True while a Win32 ClipCursor() confinement is currently applied by us. Render
 // thread owns it; the WndProc/unload paths call ClipCursor(nullptr) directly
@@ -120,7 +120,7 @@ std::atomic<bool> g_FocusLost{false}; // game lost focus / alt-tab / kill-focus
 
 // --- preset layer texture table ----------------------------------------------
 
-// One entry per preset (indexed by (int)cursor::Preset): the Nexus texture
+// One entry per preset (indexed by (int)cursor_finder::Preset): the Nexus texture
 // identifier + embedded PNG bytes (from preset_textures_data.h) for each layer.
 // Loaded via Textures_GetOrCreateFromMemory — no Windows resource lookup.
 struct LayerTex {
@@ -133,16 +133,16 @@ struct PresetTex {
     LayerTex colour;
 };
 const PresetTex kPresetTex[] = {
-    { {"TEX_CURSOR_PULSE_RING_OUTLINE",       cursor_art::kPulseRingOutline,       cursor_art::kPulseRingOutline_len},
-      {"TEX_CURSOR_PULSE_RING_COLOUR",        cursor_art::kPulseRingColour,        cursor_art::kPulseRingColour_len} },
-    { {"TEX_CURSOR_CORNER_RETICLE_OUTLINE",   cursor_art::kCornerReticleOutline,   cursor_art::kCornerReticleOutline_len},
-      {"TEX_CURSOR_CORNER_RETICLE_COLOUR",    cursor_art::kCornerReticleColour,    cursor_art::kCornerReticleColour_len} },
-    { {"TEX_CURSOR_BEACON_CROSSHAIR_OUTLINE", cursor_art::kBeaconCrosshairOutline, cursor_art::kBeaconCrosshairOutline_len},
-      {"TEX_CURSOR_BEACON_CROSSHAIR_COLOUR",  cursor_art::kBeaconCrosshairColour,  cursor_art::kBeaconCrosshairColour_len} },
-    { {"TEX_CURSOR_RADAR_DASH_OUTLINE",       cursor_art::kRadarDashOutline,       cursor_art::kRadarDashOutline_len},
-      {"TEX_CURSOR_RADAR_DASH_COLOUR",        cursor_art::kRadarDashColour,        cursor_art::kRadarDashColour_len} },
-    { {"TEX_CURSOR_SOFT_HALO_OUTLINE",        cursor_art::kSoftHaloOutline,        cursor_art::kSoftHaloOutline_len},
-      {"TEX_CURSOR_SOFT_HALO_COLOUR",         cursor_art::kSoftHaloColour,         cursor_art::kSoftHaloColour_len} },
+    { {"TEX_CURSOR_FINDER_PULSE_RING_OUTLINE",       cursor_finder_art::kPulseRingOutline,       cursor_finder_art::kPulseRingOutline_len},
+      {"TEX_CURSOR_FINDER_PULSE_RING_COLOUR",        cursor_finder_art::kPulseRingColour,        cursor_finder_art::kPulseRingColour_len} },
+    { {"TEX_CURSOR_FINDER_CORNER_RETICLE_OUTLINE",   cursor_finder_art::kCornerReticleOutline,   cursor_finder_art::kCornerReticleOutline_len},
+      {"TEX_CURSOR_FINDER_CORNER_RETICLE_COLOUR",    cursor_finder_art::kCornerReticleColour,    cursor_finder_art::kCornerReticleColour_len} },
+    { {"TEX_CURSOR_FINDER_BEACON_CROSSHAIR_OUTLINE", cursor_finder_art::kBeaconCrosshairOutline, cursor_finder_art::kBeaconCrosshairOutline_len},
+      {"TEX_CURSOR_FINDER_BEACON_CROSSHAIR_COLOUR",  cursor_finder_art::kBeaconCrosshairColour,  cursor_finder_art::kBeaconCrosshairColour_len} },
+    { {"TEX_CURSOR_FINDER_RADAR_DASH_OUTLINE",       cursor_finder_art::kRadarDashOutline,       cursor_finder_art::kRadarDashOutline_len},
+      {"TEX_CURSOR_FINDER_RADAR_DASH_COLOUR",        cursor_finder_art::kRadarDashColour,        cursor_finder_art::kRadarDashColour_len} },
+    { {"TEX_CURSOR_FINDER_SOFT_HALO_OUTLINE",        cursor_finder_art::kSoftHaloOutline,        cursor_finder_art::kSoftHaloOutline_len},
+      {"TEX_CURSOR_FINDER_SOFT_HALO_COLOUR",         cursor_finder_art::kSoftHaloColour,         cursor_finder_art::kSoftHaloColour_len} },
 };
 
 // Per-preset capabilities — the presets are geometrically different, so outline
@@ -196,7 +196,7 @@ Texture_t* ResolveTex(int idx, bool colour_layer)
 }
 
 // Resolve the window-background texture: the mottled parchment/rust card fill
-// (cursor/assets/textures). Cached in a
+// (assets/textures). Cached in a
 // single static and decoded once from the embedded PNG via
 // Textures_GetOrCreateFromMemory — the SAME memory loader as the preset layers;
 // RCDATA / TryGetBundledTexture failed for this DLL. Returns nullptr (or a
@@ -209,7 +209,7 @@ Texture_t* ResolveWindowTex()
     if (g_API && g_API->Textures_GetOrCreateFromMemory)
     {
         if (Texture_t* t = g_API->Textures_GetOrCreateFromMemory(
-                "TEX_CURSOR_WINDOW_SQUARE",
+                "TEX_CURSOR_FINDER_WINDOW_SQUARE",
                 const_cast<unsigned char*>(kWindowSquareBg),
                 static_cast<int>(kWindowSquareBgLen)))
         {
@@ -232,7 +232,7 @@ Texture_t* ResolveIconTex()
     if (g_API && g_API->Textures_GetOrCreateFromMemory)
     {
         if (Texture_t* t = g_API->Textures_GetOrCreateFromMemory(
-                "TEX_CURSOR_ICON",
+                "TEX_CURSOR_FINDER_ICON",
                 const_cast<unsigned char*>(kCursorIcon),
                 static_cast<int>(kCursorIconLen)))
         {
@@ -255,7 +255,7 @@ Texture_t* ResolvePointerTex()
     if (g_API && g_API->Textures_GetOrCreateFromMemory)
     {
         if (Texture_t* t = g_API->Textures_GetOrCreateFromMemory(
-                "TEX_CURSOR_POINTER",
+                "TEX_CURSOR_FINDER_POINTER",
                 const_cast<unsigned char*>(kPointerIcon),
                 static_cast<int>(kPointerIconLen)))
         {
@@ -328,10 +328,10 @@ void EnsureQuickAccessIcon()
         // Register only once BOTH icon textures report resolved (&& short-circuit,
         // so no partial/blank registration).
         const bool ready =
-            TryGetIconTexture(kIconId, cursor_art::kIconCursor,
-                              cursor_art::kIconCursor_len, g_IconTex) &&
-            TryGetIconTexture(kIconHoverId, cursor_art::kIconCursorHover,
-                              cursor_art::kIconCursorHover_len, g_IconHoverTex);
+            TryGetIconTexture(kIconId, cursor_finder_art::kIconCursor,
+                              cursor_finder_art::kIconCursor_len, g_IconTex) &&
+            TryGetIconTexture(kIconHoverId, cursor_finder_art::kIconCursorHover,
+                              cursor_finder_art::kIconCursorHover_len, g_IconHoverTex);
         if (!ready) { return; } // textures not created yet — retry next frame
         // kWindowName doubles as the tooltip so the toolbar label can't drift from
         // the addon/panel name.
@@ -341,7 +341,7 @@ void EnsureQuickAccessIcon()
         if (g_API->Log)
         {
             g_API->Log(LOGL_INFO, "Cursor Finder",
-                       "cursor: branded quick-access icon registered");
+                       "cursor-finder: branded quick-access icon registered");
         }
     }
     else if (!want && g_QuickAccessAdded)
@@ -354,19 +354,19 @@ void EnsureQuickAccessIcon()
 // --- colour helpers ----------------------------------------------------------
 
 // A layer tint: the layer's RGB at the overall marker alpha (opacity_pct).
-ImU32 LayerTint(const cursor::Rgb& c, int opacity_pct)
+ImU32 LayerTint(const cursor_finder::Rgb& c, int opacity_pct)
 {
-    const int a = 255 * cursor::clamp_int(opacity_pct, 0, 100) / 100;
+    const int a = 255 * cursor_finder::clamp_int(opacity_pct, 0, 100) / 100;
     return IM_COL32(c.r, c.g, c.b, a);
 }
 
 // The fill tint: fill colour at fill_opacity, further scaled by overall opacity
 // so the Opacity control fades the whole marker uniformly.
-ImU32 FillTint(const cursor::Rgb& c, int fill_opacity_pct, int opacity_pct)
+ImU32 FillTint(const cursor_finder::Rgb& c, int fill_opacity_pct, int opacity_pct)
 {
     const int a = 255
-        * cursor::clamp_int(fill_opacity_pct, 0, 100) / 100
-        * cursor::clamp_int(opacity_pct, 0, 100) / 100;
+        * cursor_finder::clamp_int(fill_opacity_pct, 0, 100) / 100
+        * cursor_finder::clamp_int(opacity_pct, 0, 100) / 100;
     return IM_COL32(c.r, c.g, c.b, a);
 }
 
@@ -394,9 +394,9 @@ ImVec2 CurrentPointer()
 // a dark outline stroke with a coloured core stroke on top. Keeps the marker
 // visible on the first few frames after load while textures upload.
 void DrawProceduralRing(ImDrawList* dl, const ImVec2& center, float size,
-                        const cursor::CursorSettings& s, bool draw_outline)
+                        const cursor_finder::CursorSettings& s, bool draw_outline)
 {
-    const float radius = cursor::pulse_ring_radius(size);
+    const float radius = cursor_finder::pulse_ring_radius(size);
     if (radius <= 0.0f) { return; }
     constexpr int   kSegments   = 48;
     constexpr float kCoreStroke = 3.0f;
@@ -414,11 +414,11 @@ void DrawProceduralRing(ImDrawList* dl, const ImVec2& center, float size,
 // colour layer on top — each a white mask tinted at draw time.
 // Falls back to the procedural ring for any frame the layer textures are not
 // ready. Drawn OVER the pointer — never replacing it.
-void DrawMarker(ImDrawList* dl, const ImVec2& center, const cursor::CursorSettings& s)
+void DrawMarker(ImDrawList* dl, const ImVec2& center, const cursor_finder::CursorSettings& s)
 {
     const float size = static_cast<float>(s.size_px);
-    const cursor::MarkerRect rect =
-        cursor::centered_marker_rect(center.x, center.y, size);
+    const cursor_finder::MarkerRect rect =
+        cursor_finder::centered_marker_rect(center.x, center.y, size);
     if (rect.width() <= 0.0f) { return; }
     const ImVec2 p_min(rect.min_x, rect.min_y);
     const ImVec2 p_max(rect.max_x, rect.max_y);
@@ -433,8 +433,8 @@ void DrawMarker(ImDrawList* dl, const ImVec2& center, const cursor::CursorSettin
     if (s.fill && caps.fill_shape != FillShape::None)
     {
         const ImU32 fc = FillTint(s.fill_colour, s.fill_opacity_pct, s.opacity_pct);
-        const float frac = cursor::clamp_int(s.fill_size_pct,
-                               cursor::kFillSizeMin, cursor::kFillSizeMax) / 100.0f;
+        const float frac = cursor_finder::clamp_int(s.fill_size_pct,
+                               cursor_finder::kFillSizeMin, cursor_finder::kFillSizeMax) / 100.0f;
         const float e = size * caps.fill_extent_max * frac;
         if (caps.fill_shape == FillShape::Square)
         {
@@ -504,17 +504,17 @@ void DrawPointerGlyph(ImDrawList* dl, const ImVec2& origin, float scale)
 // --- panel -------------------------------------------------------------------
 
 // ImGui colour widgets work in float[3]; convert to/from the stored 8-bit Rgb.
-void ToFloat3(const cursor::Rgb& c, float out[3])
+void ToFloat3(const cursor_finder::Rgb& c, float out[3])
 {
     out[0] = c.r / 255.0f; out[1] = c.g / 255.0f; out[2] = c.b / 255.0f;
 }
-cursor::Rgb FromFloat3(const float in[3])
+cursor_finder::Rgb FromFloat3(const float in[3])
 {
     auto ch = [](float f) {
         const int v = static_cast<int>(f * 255.0f + 0.5f);
-        return static_cast<std::uint8_t>(cursor::clamp_int(v, 0, 255));
+        return static_cast<std::uint8_t>(cursor_finder::clamp_int(v, 0, 255));
     };
-    return cursor::Rgb{ch(in[0]), ch(in[1]), ch(in[2])};
+    return cursor_finder::Rgb{ch(in[0]), ch(in[1]), ch(in[2])};
 }
 
 // --- preview backdrop grounds ------------------------------------------------
@@ -522,7 +522,7 @@ cursor::Rgb FromFloat3(const float in[3])
 // The preview-box needs a swappable background so the player can judge marker
 // contrast against different in-game scenes (the design's `preview-bg-row`). This is a
 // CONTRAST AID, not a persisted setting — the selection lives in a local static
-// (see RenderPanel), never in CursorSettings / cursor_settings.h. The grounds are
+// (see RenderPanel), never in CursorSettings / cursor_finder_settings.h. The grounds are
 // literal tints (a preview aid, not chrome), so they may use hardcoded colours by
 // design; they are NOT part of the shared palette.
 // Backdrop set matches the reference design: Grid / Desert / Water / Bright
@@ -576,12 +576,12 @@ void DrawPreviewGround(ImDrawList* dl, const ImVec2& p_min, const ImVec2& p_max,
 }
 
 // The settings panel body. Each control edits a working copy and
-// writes it through cursor-core on change, so durability never depends on Unload
+// writes it through cursor-finder-core on change, so durability never depends on Unload
 // and the live preview + live marker reflect edits instantly.
 void RenderPanel()
 {
     if (!g_Store) { return; }
-    cursor::CursorSettings s = g_Store->settings(); // working copy
+    cursor_finder::CursorSettings s = g_Store->settings(); // working copy
 
     const shared::theme::Palette pal = shared::theme::gw2_palette();
 
@@ -718,12 +718,12 @@ void RenderPanel()
         // the fixed 712 au card, clipping "Soft Halo" off the right edge; the
         // design uses square icon tiles instead. Picking a preset also adopts its
         // signature hue, matching the reference design's behaviour.
-        const struct { cursor::Preset p; const char* label; } kPresets[] = {
-            {cursor::Preset::PulseRing,       "Ring"},
-            {cursor::Preset::CornerReticle,   "Reticle"},
-            {cursor::Preset::BeaconCrosshair, "Cross"},
-            {cursor::Preset::RadarDash,       "Dash"},
-            {cursor::Preset::SoftHalo,        "Halo"},
+        const struct { cursor_finder::Preset p; const char* label; } kPresets[] = {
+            {cursor_finder::Preset::PulseRing,       "Ring"},
+            {cursor_finder::Preset::CornerReticle,   "Reticle"},
+            {cursor_finder::Preset::BeaconCrosshair, "Cross"},
+            {cursor_finder::Preset::RadarDash,       "Dash"},
+            {cursor_finder::Preset::SoftHalo,        "Halo"},
         };
 
         // Field label above the grid (the design puts tiles below an "Overlay
@@ -769,7 +769,7 @@ void RenderPanel()
                 if (clicked)
                 {
                     s.preset = kPresets[i].p;
-                    s.colour = cursor::signature_hue(kPresets[i].p); // signature hue
+                    s.colour = cursor_finder::signature_hue(kPresets[i].p); // signature hue
                 }
 
                 // Icon (upper region) + label (lower region), both centered in the
@@ -784,7 +784,7 @@ void RenderPanel()
                 const float icon_cy   = tile_pos.y + tile_w * 0.40f;
                 const ImVec2 icon_min(cx - icon_half, icon_cy - icon_half);
                 const ImVec2 icon_max(cx + icon_half, icon_cy + icon_half);
-                const cursor::Rgb hue = cursor::signature_hue(kPresets[i].p);
+                const cursor_finder::Rgb hue = cursor_finder::signature_hue(kPresets[i].p);
                 const ImU32 tint = IM_COL32(hue.r, hue.g, hue.b, 255);
                 if (Texture_t* t = ResolveTex(i, /*colour_layer=*/true);
                     t && t->Resource)
@@ -813,7 +813,7 @@ void RenderPanel()
         // palette. Clicking a swatch writes the SAME s.colour field the picker
         // does — no new state, no schema change.
         // Order matches the reference design: magenta first, then cyan.
-        static const cursor::Rgb kColourSwatches[6] = {
+        static const cursor_finder::Rgb kColourSwatches[6] = {
             {0xFF, 0x2D, 0x9B}, // accent-magenta
             {0x22, 0xE0, 0xFF}, // accent-cyan
             {0xF2, 0xF2, 0xF6}, // accent-white
@@ -832,7 +832,7 @@ void RenderPanel()
             for (int i = 0; i < 6; ++i)
             {
                 if (i > 0) { ImGui::SameLine(0.0f, gap); }
-                const cursor::Rgb& sc = kColourSwatches[i];
+                const cursor_finder::Rgb& sc = kColourSwatches[i];
                 const bool active = (s.colour.r == sc.r && s.colour.g == sc.g &&
                                      s.colour.b == sc.b);
                 const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -893,14 +893,14 @@ void RenderPanel()
         // Size and Opacity — ranges from the reference design, relaid as
         // 3-part rows (design size-row/opacity-row). Behaviour is identical.
         int size = s.size_px;
-        if (SliderRow("Size", "##size", &size, cursor::kSizeMin, cursor::kSizeMax, "%d px"))
+        if (SliderRow("Size", "##size", &size, cursor_finder::kSizeMin, cursor_finder::kSizeMax, "%d px"))
         {
-            s.size_px = cursor::clamp_int(size, cursor::kSizeMin, cursor::kSizeMax);
+            s.size_px = cursor_finder::clamp_int(size, cursor_finder::kSizeMin, cursor_finder::kSizeMax);
         }
         int opacity = s.opacity_pct;
-        if (SliderRow("Opacity", "##opacity", &opacity, cursor::kOpacityMin, cursor::kOpacityMax, "%d%%"))
+        if (SliderRow("Opacity", "##opacity", &opacity, cursor_finder::kOpacityMin, cursor_finder::kOpacityMax, "%d%%"))
         {
-            s.opacity_pct = cursor::clamp_int(opacity, cursor::kOpacityMin, cursor::kOpacityMax);
+            s.opacity_pct = cursor_finder::clamp_int(opacity, cursor_finder::kOpacityMin, cursor_finder::kOpacityMax);
         }
 
         // Outline and Fill apply only to presets that support them — Soft Halo is a
@@ -931,17 +931,17 @@ void RenderPanel()
 
             int fs = s.fill_size_pct;
             if (SliderRow("Size", "##fill-size", &fs,
-                          cursor::kFillSizeMin, cursor::kFillSizeMax, "%d%%") && fill_on)
+                          cursor_finder::kFillSizeMin, cursor_finder::kFillSizeMax, "%d%%") && fill_on)
             {
                 s.fill_size_pct =
-                    cursor::clamp_int(fs, cursor::kFillSizeMin, cursor::kFillSizeMax);
+                    cursor_finder::clamp_int(fs, cursor_finder::kFillSizeMin, cursor_finder::kFillSizeMax);
             }
             int fo = s.fill_opacity_pct;
             if (SliderRow("Opacity", "##fill-opacity", &fo,
-                          cursor::kFillOpacityMin, cursor::kFillOpacityMax, "%d%%") && fill_on)
+                          cursor_finder::kFillOpacityMin, cursor_finder::kFillOpacityMax, "%d%%") && fill_on)
             {
                 s.fill_opacity_pct =
-                    cursor::clamp_int(fo, cursor::kFillOpacityMin, cursor::kFillOpacityMax);
+                    cursor_finder::clamp_int(fo, cursor_finder::kFillOpacityMin, cursor_finder::kFillOpacityMax);
             }
             float fc[3]; ToFloat3(s.fill_colour, fc);
             if (ImGui::ColorEdit3("Colour##fill-colour", fc, ImGuiColorEditFlags_NoInputs) && fill_on)
@@ -977,7 +977,7 @@ void RenderPanel()
                 // SAME s.outline_colour field the ColorEdit3 does — no new state,
                 // no schema change. Hexes are literal DATA (like the colour
                 // row), not chrome from the palette.
-                static const cursor::Rgb kOutlineSwatches[4] = {
+                static const cursor_finder::Rgb kOutlineSwatches[4] = {
                     {0x0A, 0x0A, 0x0E}, // outline-ink (default)
                     {0xF2, 0xF2, 0xF6}, // white
                     {0x96, 0x78, 0x4A}, // gold-line brown
@@ -989,7 +989,7 @@ void RenderPanel()
                 for (int i = 0; i < 4; ++i)
                 {
                     if (i > 0) { ImGui::SameLine(0.0f, ogap); }
-                    const cursor::Rgb& sc = kOutlineSwatches[i];
+                    const cursor_finder::Rgb& sc = kOutlineSwatches[i];
                     const bool active = (s.outline_colour.r == sc.r &&
                                          s.outline_colour.g == sc.g &&
                                          s.outline_colour.b == sc.b);
@@ -1036,11 +1036,10 @@ void RenderPanel()
         ImGui::PopStyleColor();
 
         // Show overlay: independent visibility per combat state. Out of
-        // combat carries the full 3-way choice (Always / While moving / Never); In
-        // combat is 2-way (Always / Never) — no "While moving", because in mouse-
-        // look / action-camera the OS cursor is locked to centre and pointer deltas
-        // go to zero, so a combat "While moving" would hide the
-        // marker exactly when a busy fight needs it. Each radio edits the working
+        // combat carries the full 3-way choice (Always / While moving / Never),
+        // where "While moving" follows the character's movement. In combat is
+        // 2-way (Always / Never), so no movement rule can hide the marker during
+        // a fight, when it is most needed. Each radio edits the working
         // copy `s`, persisted instantly by the single write-through below.
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Text, shared::theme::to_vec4(pal.text_muted));
@@ -1058,14 +1057,14 @@ void RenderPanel()
         {
             int oc = static_cast<int>(s.out_of_combat_mode);
             ImGui::RadioButton("Always##oc", &oc,
-                               static_cast<int>(cursor::OutOfCombatMode::Always));
+                               static_cast<int>(cursor_finder::OutOfCombatMode::Always));
             ImGui::SameLine();
             ImGui::RadioButton("While moving##oc", &oc,
-                               static_cast<int>(cursor::OutOfCombatMode::WhileMoving));
+                               static_cast<int>(cursor_finder::OutOfCombatMode::WhileMoving));
             ImGui::SameLine();
             ImGui::RadioButton("Never##oc", &oc,
-                               static_cast<int>(cursor::OutOfCombatMode::Never));
-            s.out_of_combat_mode = static_cast<cursor::OutOfCombatMode>(oc);
+                               static_cast<int>(cursor_finder::OutOfCombatMode::Never));
+            s.out_of_combat_mode = static_cast<cursor_finder::OutOfCombatMode>(oc);
         }
 
         // In combat: Always / Never (no While moving — see the note above).
@@ -1077,11 +1076,11 @@ void RenderPanel()
         {
             int ic = static_cast<int>(s.in_combat_mode);
             ImGui::RadioButton("Always##ic", &ic,
-                               static_cast<int>(cursor::InCombatMode::Always));
+                               static_cast<int>(cursor_finder::InCombatMode::Always));
             ImGui::SameLine();
             ImGui::RadioButton("Never##ic", &ic,
-                               static_cast<int>(cursor::InCombatMode::Never));
-            s.in_combat_mode = static_cast<cursor::InCombatMode>(ic);
+                               static_cast<int>(cursor_finder::InCombatMode::Never));
+            s.in_combat_mode = static_cast<cursor_finder::InCombatMode>(ic);
         }
     }
     ImGui::EndChild();
@@ -1109,7 +1108,7 @@ void RenderPanel()
         // defaults() has welcomed == false, so a naive reset would re-arm the
         // first-run auto-open on the next launch. Capture it, reset, restore it.
         const bool wasWelcomed = s.welcomed;
-        s = cursor::CursorSettings::defaults();
+        s = cursor_finder::CursorSettings::defaults();
         s.welcomed = wasWelcomed;
     }
 
@@ -1248,7 +1247,7 @@ void MaybeLogTexReadiness()
     }
     char msg[160];
     std::snprintf(msg, sizeof(msg),
-        "cursor: preset textures ready colour=%d/5 outline=%d/5", colour_ready, outline_ready);
+        "cursor-finder: preset textures ready colour=%d/5 outline=%d/5", colour_ready, outline_ready);
     g_API->Log(LOGL_INFO, "Cursor Finder", msg);
     logged = true;
 }
@@ -1321,7 +1320,7 @@ void AddonRender()
 
     if (g_Store)
     {
-        const cursor::CursorSettings& s = g_Store->settings();
+        const cursor_finder::CursorSettings& s = g_Store->settings();
         if (s.enabled)
         {
             // Anchor on the OS cursor hotspot — the true click point.
@@ -1351,43 +1350,46 @@ void AddonRender()
             const bool ui_capturing  = ImGui::GetIO().WantCaptureMouse;
             const bool cursor_hidden = CursorIsHidden();
 
-            const cursor::Vec2 draw = g_Clip.update(
-                s.freeze_after_drag, button_down, cursor::Vec2{mouse.x, mouse.y},
+            const cursor_finder::Vec2 draw = g_Clip.update(
+                s.freeze_after_drag, button_down, cursor_finder::Vec2{mouse.x, mouse.y},
                 ui_capturing, cursor_hidden);
             ApplyClip(g_Clip.frozen());
             const ImVec2 center(draw.x, draw.y);
 
             // Visibility matrix: Nexus's IsGameplay (false at char select
-            // and on loading screens), the MumbleLink combat bit and frame-to-frame pointer
-            // motion feed the pure cursor-core decision. A missing Nexus link reads
-            // as not-in-gameplay; outside gameplay the marker shows only while the
-            // settings window is open. Only the DrawMarker call is gated — the
-            // clip-while-dragging behaviour above is unchanged.
+            // and on loading screens), the MumbleLink combat bit and Nexus's
+            // IsMoving (character motion) feed the pure cursor-finder-core decision. A
+            // missing Nexus link reads as not-in-gameplay and not moving; outside
+            // gameplay the marker shows only while the settings window is open.
+            // Only the DrawMarker call is gated — the clip-while-dragging
+            // behaviour above is unchanged.
             bool in_gameplay = false;
             bool in_combat   = false;
+            bool is_moving   = false;
             if (g_API && g_API->DataLink_Get)
             {
                 const auto* nexus = static_cast<const NexusLinkData_t*>(
                     g_API->DataLink_Get(DL_NEXUS_LINK));
                 in_gameplay = nexus && nexus->IsGameplay;
-                const auto* link = static_cast<const cursor::MumbleLink*>(
+                is_moving   = nexus && nexus->IsMoving;
+                const auto* link = static_cast<const cursor_finder::MumbleLink*>(
                     g_API->DataLink_Get(DL_MUMBLE_LINK));
                 if (in_gameplay && link)
                 {
-                    in_combat = cursor::is_in_combat(link->ContextData.UiState);
+                    in_combat = cursor_finder::is_in_combat(link->ContextData.UiState);
                 }
             }
-            // Track the REAL pointer (not the possibly-frozen draw point) so
-            // "While moving" reflects actual pointer motion. ImGui::GetTime() is a
+            // "While moving" follows the character, with a 1 s linger so the
+            // marker doesn't blink on short pauses. ImGui::GetTime() is a
             // monotonic per-frame clock; milliseconds feed the linger window.
             const int now_ms = static_cast<int>(ImGui::GetTime() * 1000.0);
-            const bool ptr_active = g_PointerMotion.update(mouse.x, mouse.y, now_ms);
+            const bool moving = g_MotionLinger.update(is_moving, now_ms);
 
             // Foreground draw list = above the addon's own windows; background =
             // below them ("Show over Nexus windows").
             ImDrawList* dl = s.draw_above_windows ? ImGui::GetForegroundDrawList()
                                                   : ImGui::GetBackgroundDrawList();
-            if (cursor::should_show_marker(s, in_gameplay, in_combat, ptr_active, g_PanelOpen))
+            if (cursor_finder::should_show_marker(s, in_gameplay, in_combat, moving, g_PanelOpen))
             {
                 DrawMarker(dl, center, s);
             }
@@ -1530,7 +1532,7 @@ void AddonRender()
         // shows through (PushPanelStyle's ChildBg is the lighter card colour,
         // which would read as a raised card over the whole body).
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-        if (ImGui::BeginChild("##cursor-body", ImVec2(0.0f, 0.0f), false))
+        if (ImGui::BeginChild("##cursor-finder-body", ImVec2(0.0f, 0.0f), false))
         {
             RenderPanel();
         }
@@ -1587,11 +1589,15 @@ void AddonLoad(AddonAPI_t* aApi)
         reinterpret_cast<void* (*)(size_t, void*)>(aApi->ImguiMalloc),
         reinterpret_cast<void  (*)(void*, void*)>(aApi->ImguiFree));
 
-    // Persist under "<GW2>/addons/cursor/cursor.json" (versioned JSON).
-    std::filesystem::path dir =
-        aApi->Paths_GetAddonDirectory ? aApi->Paths_GetAddonDirectory("cursor")
-                                      : std::filesystem::path("cursor");
-    g_Store = new cursor::CursorStore(dir / "cursor.json");
+    // Persist under "<GW2>/addons/cursor-finder/cursor-finder.json" (versioned
+    // JSON), moving an older install's "<GW2>/addons/cursor/cursor.json" there
+    // once. Both paths come from the addons root, so Nexus is never asked for the
+    // old folder (which would re-create it).
+    const std::filesystem::path root =
+        aApi->Paths_GetAddonDirectory ? aApi->Paths_GetAddonDirectory(nullptr)
+                                      : std::filesystem::path("addons");
+    g_Store = new cursor_finder::CursorStore(cursor_finder::resolve_settings_path(
+        cursor_finder::settings_file(root), cursor_finder::legacy_settings_file(root)));
 
     // One-time first-run auto-open. On a brand-new install the
     // store has no file, so it loaded defaults() with welcomed == false -> open the
@@ -1601,10 +1607,10 @@ void AddonLoad(AddonAPI_t* aApi)
     // or a first-run user who opens+closes without touching anything would re-trigger
     // the auto-open every launch. This is a load-time
     // one-shot, not a per-frame/keybind auto-open. An existing install migrated
-    // forward as already-welcomed (cursor_store), so this never fires on upgrade.
+    // forward as already-welcomed (cursor_finder_store), so this never fires on upgrade.
     {
-        cursor::CursorSettings s = g_Store->settings();
-        if (cursor::should_first_run_open(s))
+        cursor_finder::CursorSettings s = g_Store->settings();
+        if (cursor_finder::should_first_run_open(s))
         {
             g_PanelOpen = true;
             s.welcomed  = true;
@@ -1616,7 +1622,7 @@ void AddonLoad(AddonAPI_t* aApi)
     {
         char msg[160];
         std::snprintf(msg, sizeof(msg),
-            "cursor: Textures_GetOrCreateFromMemory=%p (loading %u preset layers from memory)",
+            "cursor-finder: Textures_GetOrCreateFromMemory=%p (loading %u preset layers from memory)",
             reinterpret_cast<void*>(aApi->Textures_GetOrCreateFromMemory), 10u);
         aApi->Log(LOGL_INFO, "Cursor Finder", msg);
     }
@@ -1646,7 +1652,7 @@ void AddonLoad(AddonAPI_t* aApi)
     // and the "Show quick-access icon" setting governs whether it shows at all —
     // both are handled from the render loop (see EnsureQuickAccessIcon).
 
-    if (aApi->Log) { aApi->Log(LOGL_INFO, "Cursor Finder", "cursor addon loaded"); }
+    if (aApi->Log) { aApi->Log(LOGL_INFO, "Cursor Finder", "cursor-finder addon loaded"); }
 }
 
 void AddonUnload()
@@ -1687,7 +1693,7 @@ extern "C" __declspec(dllexport) AddonDefinition_t* GetAddonDef()
     g_AddonDef.Signature   = 0x63757273; // "curs" — unique addon signature
     g_AddonDef.APIVersion  = NEXUS_API_VERSION;
     g_AddonDef.Name        = "Cursor Finder";
-    g_AddonDef.Version     = AddonVersion_t{ 1, 0, 0, 0 };
+    g_AddonDef.Version     = AddonVersion_t{ 1, 0, 1, 0 };
     g_AddonDef.Author      = "Fuchsia Llama Mama";
     g_AddonDef.Description = "A customizable highlight centered on the mouse pointer so the cursor stays easy to find in busy scenes.";
     g_AddonDef.Load        = AddonLoad;
@@ -1697,7 +1703,7 @@ extern "C" __declspec(dllexport) AddonDefinition_t* GetAddonDef()
     // (vMAJOR.MINOR.PATCH) is highest and downloads its first .dll asset, so the
     // tag must match Version above.
     g_AddonDef.Provider    = UP_GitHub;
-    g_AddonDef.UpdateLink  = "https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor";
+    g_AddonDef.UpdateLink  = "https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor-finder";
     return &g_AddonDef;
 }
 

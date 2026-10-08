@@ -1,4 +1,4 @@
-#include "core/cursor_store.h"
+#include "core/cursor_finder_store.h"
 
 #include <cstdint>
 #include <optional>
@@ -10,7 +10,64 @@
 
 #include "persistence/atomic_file.h"
 
-namespace cursor {
+namespace cursor_finder {
+
+std::filesystem::path settings_file(const std::filesystem::path& addons_root)
+{
+    return addons_root / "cursor-finder" / "cursor-finder.json";
+}
+
+std::filesystem::path legacy_settings_file(const std::filesystem::path& addons_root)
+{
+    return addons_root / "cursor" / "cursor.json";
+}
+
+std::filesystem::path resolve_settings_path(const std::filesystem::path& new_file,
+                                            const std::filesystem::path& legacy_file)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    // Every call uses the error_code overload: this runs during addon load and
+    // must never throw. A new file we cannot even stat is still treated as
+    // present, so it is never overwritten by the older legacy one.
+    if (fs::exists(new_file, ec) || ec) { return new_file; }
+    // No readable legacy file: start at the new path (a legacy file we cannot
+    // stat stays on disk untouched).
+    if (!fs::exists(legacy_file, ec)) { return new_file; }
+
+    const auto is_file = [](const fs::path& p) {
+        std::error_code e;
+        return fs::is_regular_file(p, e) && !e;
+    };
+
+    fs::create_directories(new_file.parent_path(), ec);
+    if (!ec) { fs::rename(legacy_file, new_file, ec); }
+    if (ec || !is_file(new_file))
+    {
+        // The rename failed (e.g. the legacy file is locked): copy to a temp file
+        // beside the target, move it into place, and only then delete the
+        // legacy file.
+        ec.clear();
+        fs::path tmp = new_file;
+        tmp += ".tmp";
+        fs::copy_file(legacy_file, tmp, fs::copy_options::overwrite_existing, ec);
+        if (!ec) { fs::rename(tmp, new_file, ec); }
+        if (ec || !is_file(new_file))
+        {
+            fs::remove(tmp, ec);
+            return legacy_file; // keep using the real settings; retry next launch
+        }
+        fs::remove(legacy_file, ec);
+    }
+
+    // Tidy the old folder: a stray temp file from an interrupted write, then the
+    // folder itself if nothing else is left in it.
+    fs::path legacy_tmp = legacy_file;
+    legacy_tmp += ".tmp";
+    fs::remove(legacy_tmp, ec);
+    fs::remove(legacy_file.parent_path(), ec); // removes only an empty folder
+    return new_file;
+}
 
 using nlohmann::json;
 
@@ -270,4 +327,4 @@ bool CursorStore::set(const CursorSettings& next)
     return true;
 }
 
-} // namespace cursor
+} // namespace cursor_finder

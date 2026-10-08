@@ -1,6 +1,6 @@
 #include "core/marker.h"
 
-namespace cursor {
+namespace cursor_finder {
 
 MarkerRect centered_marker_rect(float center_x, float center_y, float size)
 {
@@ -20,4 +20,4 @@ float pulse_ring_radius(float size)
     return size > 0.0f ? size * 0.5f : 0.0f;
 }
 
-} // namespace cursor
+} // namespace cursor_finder

@@ -1,6 +1,6 @@
-// cursor-core — the persisted Cursor Finder settings record. Pure C++17 (no
+// cursor-finder-core — the persisted Cursor Finder settings record. Pure C++17 (no
 // Nexus/ImGui/Windows), so it is unit-testable off-game on macOS/clang. The DLL
-// glue lives in cursor/src.
+// glue lives in src/.
 //
 // The record carries a top-level schema version so later versions add fields and migrate
 // older files forward without data loss:
@@ -24,14 +24,14 @@
 //         persisted. An older/absent-version file migrates forward as
 //         ALREADY welcomed (welcomed = true) so upgrading users get no
 //         surprise auto-open.
-// See cursor_store.h for the load/save/migrate machinery.
+// See cursor_finder_store.h for the load/save/migrate machinery.
 #pragma once
 
 #include <cstdint>
 #include <optional>
 #include <string_view>
 
-namespace cursor {
+namespace cursor_finder {
 
 // The five presets. Pulse Ring is the product default. Adding a preset is data
 // (art + this enum + the slug/hue tables below), not new draw code.
@@ -59,7 +59,7 @@ inline bool operator==(const Rgb& a, const Rgb& b)
 inline bool operator!=(const Rgb& a, const Rgb& b) { return !(a == b); }
 
 // Control ranges from the reference design. Read-side
-// clamping (cursor_store) keeps an out-of-range persisted value in bounds rather
+// clamping (cursor_finder_store) keeps an out-of-range persisted value in bounds rather
 // than trusting the file.
 inline constexpr int kSizeMin        = 40;   // px
 inline constexpr int kSizeMax        = 100;  // px (the design allowed 180; capped to
@@ -121,10 +121,9 @@ inline std::optional<Preset> preset_from_slug(std::string_view s)
 
 // --- v6 visibility matrix ---------------------------------------------------
 // The marker's visibility per game state. Out of combat carries the
-// full 3-way choice; In combat is intentionally 2-way (no "While moving"): in
-// combat the player is in mouse-look / action-camera where the OS cursor is locked
-// to centre and pointer deltas are zero, so a combat "While moving" would hide the
-// marker exactly when it is most needed.
+// full 3-way choice ("While moving" follows character motion); In combat is
+// intentionally 2-way (no "While moving"), so no movement rule can hide the
+// marker during a fight, when it is most needed.
 enum class OutOfCombatMode { Always, WhileMoving, Never };
 enum class InCombatMode { Always, Never };
 
@@ -171,14 +170,14 @@ inline std::optional<InCombatMode> in_combat_from_slug(std::string_view s)
 // The Cursor Finder configuration, one shared profile (not per-character).
 struct CursorSettings {
     // Bump when the on-disk shape changes; older/absent-version files migrate
-    // forward (see cursor_store.cpp).
+    // forward (see cursor_finder_store.cpp).
     static constexpr int kSchemaVersion = 7;
 
     // --- v1 ------------------------------------------------------------------
     // Master on/off for the marker. Default ON: enabling the addon at all is an
-    // explicit act (the player added cursor.dll and toggled it), and the whole
-    // point — a findable cursor — should be visible the first time the panel or
-    // hotkey is used rather than silently off.
+    // explicit act (the player added cursor-finder.dll and toggled it), and the
+    // whole point — a findable cursor — should be visible the first time the
+    // panel or hotkey is used rather than silently off.
     bool enabled = true;
 
     // Draw the marker on the foreground draw list (above the addon's own Nexus
@@ -237,8 +236,8 @@ struct CursorSettings {
     // When the marker is drawn, chosen independently per combat state ("Show
     // overlay"). Both default Always, so a migrated v1-v5 file keeps the current
     // always-shown behaviour. Combat state comes from the MumbleLink UiState bit
-    // (see cursor/core/visibility.h); "While moving" (out-of-combat only) tracks
-    // frame-to-frame pointer motion.
+    // (see core/visibility.h); "While moving" (out-of-combat only) follows
+    // character motion (Nexus IsMoving).
     OutOfCombatMode out_of_combat_mode = OutOfCombatMode::Always;
     InCombatMode    in_combat_mode     = InCombatMode::Always;
 
@@ -248,7 +247,7 @@ struct CursorSettings {
     // first-run auto-open; the DLL glue then sets this true and
     // persists it immediately so the auto-open never repeats on later launches.
     // An older/absent-version on-disk file migrates forward as ALREADY welcomed
-    // (cursor_store.cpp), so upgrading users get no surprise auto-open.
+    // (cursor_finder_store.cpp), so upgrading users get no surprise auto-open.
     bool welcomed = false;
 
     // The factory default record (first run, or recovery from a corrupt file).
@@ -286,4 +285,4 @@ inline bool operator!=(const CursorSettings& a, const CursorSettings& b)
     return !(a == b);
 }
 
-} // namespace cursor
+} // namespace cursor_finder

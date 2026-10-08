@@ -28,9 +28,10 @@ combat), never game memory.
 You need Guild Wars 2 (64-bit) with [Nexus](https://raidcore.gg/gw2/nexus)
 installed.
 
-1. Download `cursor.dll` from the latest
-   [release](https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor/releases/latest).
-2. Put `cursor.dll` in your Guild Wars 2 `addons/` folder.
+1. Download `cursor-finder.dll` from the latest
+   [release](https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor-finder/releases/latest).
+2. Put `cursor-finder.dll` in your Guild Wars 2 `addons/` folder. If an older
+   `cursor.dll` is there, delete it first (your settings are kept).
 3. Start the game and load **Cursor Finder** from Nexus's addon list.
 
 Nexus keeps it up to date automatically from this repository's releases.
@@ -40,15 +41,16 @@ a standard x64 Windows DLL.
 
 ## Your data
 
-Settings are stored locally in `addons/cursor/cursor.json`. Nothing leaves your
-computer.
+Settings are stored locally in `addons/cursor-finder/cursor-finder.json`
+(an older `addons/cursor/cursor.json` is moved there once, on first start).
+Nothing leaves your computer.
 
 ## Building
 
 Clone with submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor
+git clone --recurse-submodules https://github.com/FuchsiaLlamaMama/gw2-nexus-plugin-cursor-finder
 ```
 
 **Windows (MSVC, x64).** Builds the DLL and runs the unit tests:
@@ -64,7 +66,7 @@ pure-logic library; the DLL itself is Windows-only. Without CMake,
 `tests/run_offgame.sh` compiles and runs the tests with `xcrun clang++`.
 
 **CI.** Every push and pull request builds on `windows-latest`, runs the tests,
-and uploads `cursor.dll` as an artifact.
+and uploads `cursor-finder.dll` as an artifact.
 
 ## Dependencies
 

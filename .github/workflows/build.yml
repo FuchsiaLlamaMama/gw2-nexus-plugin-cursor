@@ -1,5 +1,5 @@
 # Builds Cursor Finder on Windows (MSVC + CMake, x64) on every push and pull
-# request, runs the unit tests, and uploads cursor.dll as an artifact.
+# request, runs the unit tests, and uploads cursor-finder.dll as an artifact.
 name: build
 
 on:
@@ -20,12 +20,12 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release
 
-      - name: Test (cursor-core, doctest via ctest)
+      - name: Test (cursor-finder-core, doctest via ctest)
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Upload cursor.dll
+      - name: Upload cursor-finder.dll
         uses: actions/upload-artifact@v4
         with:
-          name: cursor-dll
-          path: build/**/cursor.dll
+          name: cursor-finder-dll
+          path: build/**/cursor-finder.dll
           if-no-files-found: error

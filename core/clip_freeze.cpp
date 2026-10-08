@@ -1,6 +1,6 @@
 #include "core/clip_freeze.h"
 
-namespace cursor {
+namespace cursor_finder {
 
 void ClipFreeze::reset()
 {
@@ -44,4 +44,4 @@ Vec2 ClipFreeze::update(bool enabled, bool button_down, Vec2 pointer,
     return frozen_ ? frozen_pos_ : pointer;
 }
 
-} // namespace cursor
+} // namespace cursor_finder

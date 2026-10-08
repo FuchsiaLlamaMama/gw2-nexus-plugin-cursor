@@ -1,12 +1,12 @@
-// cursor-core — pointer-marker geometry. Pure C++17, no ImGui: the DLL feeds the
+// cursor-finder-core — pointer-marker geometry. Pure C++17, no ImGui: the DLL feeds the
 // returned floats straight into ImGui draw calls (AddImage / AddCircle), but the
 // math stays testable off-game.
 #pragma once
 
-namespace cursor {
+namespace cursor_finder {
 
 // An axis-aligned draw rectangle in screen pixels. Plain floats — deliberately
-// NOT ImVec2, to keep ImGui out of cursor-core. The DLL converts to ImVec2 at
+// NOT ImVec2, to keep ImGui out of cursor-finder-core. The DLL converts to ImVec2 at
 // the draw site.
 struct MarkerRect {
     float min_x = 0.0f;
@@ -33,4 +33,4 @@ MarkerRect centered_marker_rect(float center_x, float center_y, float size);
 // size the ring identically. Half the marker side.
 float pulse_ring_radius(float size);
 
-} // namespace cursor
+} // namespace cursor_finder

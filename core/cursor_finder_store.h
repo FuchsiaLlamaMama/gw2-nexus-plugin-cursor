@@ -1,4 +1,4 @@
-// cursor-core — the persisted Cursor Finder settings and its durability
+// cursor-finder-core — the persisted Cursor Finder settings and its durability
 // guarantee.
 //
 // CursorStore owns a JSON file path and is WRITE-THROUGH: every committed
@@ -15,9 +15,29 @@
 #include <filesystem>
 #include <string>
 
-#include "core/cursor_settings.h"
+#include "core/cursor_finder_settings.h"
 
-namespace cursor {
+namespace cursor_finder {
+
+// Where the settings live, built from the Nexus addons root
+// (Paths_GetAddonDirectory(nullptr)): <addons>/cursor-finder/cursor-finder.json.
+// Installs from before the rename keep theirs at <addons>/cursor/cursor.json.
+std::filesystem::path settings_file(const std::filesystem::path& addons_root);
+std::filesystem::path legacy_settings_file(const std::filesystem::path& addons_root);
+
+// One-time move of the legacy settings file, run before the store loads.
+// Returns the path the store should use; never throws.
+//   - the new file exists       -> the new path (a legacy file is left alone:
+//                                  only an older build could have written it)
+//   - no legacy file            -> the new path (defaults)
+//   - only the legacy file      -> move it (or copy, then delete it), clear the
+//                                  emptied legacy folder, return the new path
+//   - the move/copy both failed -> the legacy path, so the real settings still
+//                                  load and the next launch tries again
+// A new file that cannot be stat'd counts as present (never overwritten); a
+// legacy file that cannot be stat'd is left on disk and the new path is used.
+std::filesystem::path resolve_settings_path(const std::filesystem::path& new_file,
+                                            const std::filesystem::path& legacy_file);
 
 class CursorStore {
 public:
@@ -62,4 +82,4 @@ private:
     CursorSettings        settings_;
 };
 
-} // namespace cursor
+} // namespace cursor_finder

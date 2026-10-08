@@ -1,7 +1,8 @@
 # Publishes a GitHub Release when a version tag (vMAJOR.MINOR.PATCH) is pushed.
 # Nexus auto-updates from these releases: it picks the highest version tag and
 # downloads the release's first .dll asset, so each release carries exactly one
-# .dll (cursor.dll) and the tag must match the version compiled into the addon.
+# .dll (cursor-finder.dll) and the tag must match the version compiled into the
+# addon.
 name: release
 
 on:
@@ -38,16 +39,16 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release
 
-      - name: Test (cursor-core, doctest via ctest)
+      - name: Test (cursor-finder-core, doctest via ctest)
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Publish the release with cursor.dll
+      - name: Publish the release with cursor-finder.dll
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          dll=$(find build -name cursor.dll -path '*Release*' | head -n 1)
-          if [ -z "$dll" ]; then echo "::error::cursor.dll not found"; exit 1; fi
+          dll=$(find build -name cursor-finder.dll -path '*Release*' | head -n 1)
+          if [ -z "$dll" ]; then echo "::error::cursor-finder.dll not found"; exit 1; fi
           gh release create "$GITHUB_REF_NAME" "$dll" \
             --title "Cursor Finder $GITHUB_REF_NAME" \
             --generate-notes

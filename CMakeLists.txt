@@ -1,12 +1,13 @@
 # Cursor Finder — a Guild Wars 2 Nexus addon. Split so the logic is testable
 # off-game:
 #
-#   cursor-core  — pure C++17 settings + geometry + write-through persistence
-#                  (macOS + MSVC).
-#   cursor       — the Nexus/ImGui DLL glue (Windows/MSVC only).
+#   cursor-finder-core — pure C++17 settings + geometry + write-through
+#                        persistence (macOS + MSVC).
+#   cursor-finder      — the Nexus/ImGui DLL glue (Windows/MSVC only).
 #
-# The DLL is guarded behind WIN32 so a macOS configure still builds cursor-core
-# and its doctest tests (the DLL needs Nexus.h + ImGui + Windows.h).
+# The DLL is guarded behind WIN32 so a macOS configure still builds
+# cursor-finder-core and its doctest tests (the DLL needs Nexus.h + ImGui +
+# Windows.h).
 #
 # Builds standalone (this directory is the top-level project: dependencies come
 # from the submodules/vendored headers below) or as a subdirectory of a larger
@@ -15,7 +16,7 @@
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   cmake_minimum_required(VERSION 3.21)
-  project(gw2-nexus-plugin-cursor LANGUAGES CXX)
+  project(gw2-nexus-plugin-cursor-finder LANGUAGES CXX)
 
   set(CMAKE_CXX_STANDARD 17)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -57,32 +58,32 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_subdirectory(shared)
 endif()
 
-# --- cursor-core: platform-independent, unit-tested ----------------------------
-add_library(cursor-core STATIC
-  core/cursor_store.cpp
+# --- cursor-finder-core: platform-independent, unit-tested -------------------
+add_library(cursor-finder-core STATIC
+  core/cursor_finder_store.cpp
   core/marker.cpp
   core/clip_freeze.cpp
   core/visibility.cpp
 )
-target_include_directories(cursor-core PUBLIC .)
-target_compile_features(cursor-core PUBLIC cxx_std_17)
-target_link_libraries(cursor-core PUBLIC shared-core nlohmann-json)
+target_include_directories(cursor-finder-core PUBLIC .)
+target_compile_features(cursor-finder-core PUBLIC cxx_std_17)
+target_link_libraries(cursor-finder-core PUBLIC shared-core nlohmann-json)
 
-# --- cursor-core tests (doctest, run via ctest) --------------------------------
-add_executable(cursor-core-tests tests/test_cursor_core.cpp)
-target_link_libraries(cursor-core-tests PRIVATE cursor-core doctest)
-add_test(NAME cursor-core-tests COMMAND cursor-core-tests)
+# --- cursor-finder-core tests (doctest, run via ctest) -----------------------
+add_executable(cursor-finder-core-tests tests/test_cursor_finder_core.cpp)
+target_link_libraries(cursor-finder-core-tests PRIVATE cursor-finder-core doctest)
+add_test(NAME cursor-finder-core-tests COMMAND cursor-finder-core-tests)
 
-# --- cursor: the Nexus addon DLL (Windows only) --------------------------------
+# --- cursor-finder: the Nexus addon DLL (Windows only) -----------------------
 if(WIN32)
   # Textures are embedded as C byte arrays (assets/*_data.h) and loaded via
   # Textures_GetOrCreateFromMemory — no .rc / Windows resource lookup
   # (FindResource by numeric ID fails at runtime under CrossOver/Wine). No
   # bundled font: the panel uses ImGui's default font.
-  add_library(cursor SHARED src/entry.cpp)
-  target_link_libraries(cursor PRIVATE imgui nexus-api cursor-core shared-core)
-  set_target_properties(cursor PROPERTIES
-    PREFIX ""            # cursor.dll, not libcursor.dll
-    OUTPUT_NAME "cursor"
+  add_library(cursor-finder SHARED src/entry.cpp)
+  target_link_libraries(cursor-finder PRIVATE imgui nexus-api cursor-finder-core shared-core)
+  set_target_properties(cursor-finder PROPERTIES
+    PREFIX ""            # cursor-finder.dll, not libcursor-finder.dll
+    OUTPUT_NAME "cursor-finder"
   )
 endif()
